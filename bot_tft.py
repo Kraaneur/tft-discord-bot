@@ -70,8 +70,8 @@ async def on_ready():
 
 @bot.command()
 async def add(ctx, *, nameAndTag: str):
-    name = nameAndTag.split('#')[0];
-    tag = nameAndTag.split('#')[1];
+    name = nameAndTag.split('#')[0].strip();
+    tag = nameAndTag.split('#')[1].strip();
     
     players = load_players()
     if any(p['name'].lower() == name.lower() for p in players):
@@ -98,6 +98,12 @@ async def remove(ctx, *, name: str):
         return
     save_players(players)
     await ctx.send(f"✅ **{name}** retiré du classement.")
+
+@bot.command(aliases=['supp', 'del'])
+async def removeAll(ctx, *, name: str):
+    players = []
+    save_players(players)
+    await ctx.send(f"💀 Le classement a été totalement supprimé.")
 
 @bot.command(aliases=['lb', 'rank'])
 async def classement(ctx):
@@ -377,6 +383,12 @@ async def commande(ctx):
     embed.add_field(
         name="📜 !history <pseudo#tag>",
         value="Affiche les 5 dernières games (si tu l'actives).\n**Exemple :** `!history Toto#EUW`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="💀 !removeAll",
+        value="Supprime totalement le classement. A ne pas utiliser n'importe comment.",
         inline=False
     )
 
