@@ -99,7 +99,7 @@ async def remove(ctx, *, name: str):
     save_players(players)
     await ctx.send(f"✅ **{name}** retiré du classement.")
 
-@bot.command(aliases=['supp', 'del'])
+@bot.command()
 async def removeAll(ctx, *, name: str):
     players = []
     save_players(players)
