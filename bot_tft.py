@@ -363,6 +363,12 @@ async def commande(ctx):
     )
 
     embed.add_field(
+        name="📈 !stats <pseudo>"
+        value="Liste quelques statistiques sur le joueur.\n**Exemple :** `!stats Toto`"
+        inline=False
+    )
+
+    embed.add_field(
         name="🏆 !classement",
         value="Affiche le classement des joueurs ajoutés.\n**Exemple :** `!classement`",
         inline=False
@@ -375,14 +381,14 @@ async def commande(ctx):
     )
 
     embed.add_field(
-        name="⚔️ !compare \"pseudo 1\" \"pseudo 2\"",
-        value="Compare deux joueurs (si tu l'actives).\n**Exemple :** `!compare \"Jean Claude\" \"Claude Jean\"`",
+        name="⚔️ !compare <pseudo1> vs <pseudo2>",
+        value="Compare deux joueurs.\n**Exemple :** `!compare Jean Claude vs Claude Jean`",
         inline=False
     )
 
     embed.add_field(
-        name="📜 !history <pseudo#tag>",
-        value="Affiche les 5 dernières games (si tu l'actives).\n**Exemple :** `!history Toto#EUW`",
+        name="📜 !history <pseudo>",
+        value="Affiche les 5 dernières games.\n**Exemple :** `!history Toto`",
         inline=False
     )
 
