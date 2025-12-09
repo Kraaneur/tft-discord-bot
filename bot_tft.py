@@ -363,8 +363,8 @@ async def commande(ctx):
     )
 
     embed.add_field(
-        name="📈 !stats <pseudo>"
-        value="Liste quelques statistiques sur le joueur.\n**Exemple :** `!stats Toto`"
+        name="📈 !stats <pseudo>",
+        value="Liste quelques statistiques sur le joueur.\n**Exemple :** `!stats Toto`",
         inline=False
     )
 
