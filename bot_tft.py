@@ -8,7 +8,7 @@ import os
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 RIOT_API_KEY = os.getenv("RIOT_API_KEY")
 REGION = 'euw1'
-DATA_FILE = 'players.json'
+DATA_FILE = '/data/players.json'
 
 intents = discord.Intents.default()
 intents.message_content = True
