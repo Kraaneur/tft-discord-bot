@@ -421,7 +421,13 @@ async def commande(ctx):
 
     embed.add_field(
         name="📜 !ranked <pseudo>",
-        value="Affiche les 5 dernières games ranked (sur les 20 dernières games).\nExemple : !history Toto",
+        value="Affiche les 5 dernières games ranked (sur les 20 dernières games).\nExemple : !ranked Toto",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🤓 !nolife",
+        value="Affiche le classement des 10 joueurs avec le plus de parties cette saison.",
         inline=False
     )
 
@@ -575,5 +581,57 @@ async def ranked(ctx, *, name: str):
             # sans image, on envoie juste l'embed minimal
             embed.description = "Aucune image de compo disponible."
             await ctx.send(embed=embed)
+
+@bot.command()
+async def nolife(ctx):
+    players = load_players()
+    if not players:
+        return await ctx.send("❌ Aucun joueur enregistré.")
+
+    results = []
+
+    async with aiohttp.ClientSession() as session:
+        for p in players:
+            name = p["name"]
+            puuid = p["uuid"]
+
+            league = await get_league(session, puuid)
+            if not league:
+                continue  # joueur unranked → pas de stats
+
+            wins = league.get("wins", 0)
+            losses = league.get("losses", 0)
+            total = wins + losses
+
+            results.append((name, total, wins, losses))
+
+    if not results:
+        return await ctx.send("⚪ Aucun joueur n'a de parties classées.")
+
+    # Tri décroissant par total de parties
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    top10 = results[:10]
+
+    embed = discord.Embed(
+        title="🏆 TOP 10 des plus gros no-life TFT",
+        description="Classement basé sur le total **de parties classées jouées**.\n",
+        color=0xe67e22
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    lines = []
+    for i, (name, total, wins, losses) in enumerate(top10, start=1):
+        medal = medals[i-1] if i <= 3 else f"#{i}"
+        lines.append(
+            f"**{medal} — {name}** : `{total}` games "
+            f"(🔵 {wins} / 🔴 {losses})"
+        )
+
+    embed.add_field(name="Classement", value="\n".join(lines), inline=False)
+    embed.set_footer(text="Basé sur les statistiques classées Riot Games")
+
+    await ctx.send(embed=embed)
 
 bot.run(DISCORD_TOKEN)
