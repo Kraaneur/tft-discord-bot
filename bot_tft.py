@@ -5,7 +5,7 @@ import json
 import os
 import re
 from io import BytesIO
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 # CONFIG (change ici)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -480,8 +480,6 @@ async def ranked(ctx, *, name: str):
 
     # ---------- Construit une image ligne de compo ----------
     async def build_comp_image(units):
-        from PIL import Image, ImageDraw, ImageFont
-
         size = 80
         star_band_height = 30
 
@@ -523,14 +521,12 @@ async def ranked(ctx, *, name: str):
         final_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(final_img)
 
-        # ✔ Police qui marche sur Railway
-        font = ImageFont.load_default()
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
 
         for idx, img in enumerate(champ_imgs):
             x = idx * size
             stars = tier_emoji(tiers[idx])
 
-            # ✔ bbox compatible Pillow 10+
             bbox = draw.textbbox((0, 0), stars, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
@@ -538,9 +534,9 @@ async def ranked(ctx, *, name: str):
             tx = x + (size - text_w) // 2
             ty = (star_band_height - text_h) // 2
 
-            # 🎨 contour noir
+            # contour
             draw.text((tx + 1, ty + 1), stars, fill=(0, 0, 0), font=font)
-            # ⭐ étoiles blanches
+            # texte
             draw.text((tx, ty), stars, fill=(255, 255, 255), font=font)
 
             final_img.paste(img, (x, star_band_height), img)
