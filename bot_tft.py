@@ -67,6 +67,14 @@ async def get_match_data(session, match_id):
             return await resp.json()
     return None
 
+def get_default_font():
+    try:
+        import PIL
+        font_path = os.path.join(os.path.dirname(PIL.__file__), "Tests/fonts/FreeMono.ttf")
+        return ImageFont.truetype(font_path, 22)
+    except Exception:
+        return ImageFont.load_default()
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} connecté ! Utilise !add <pseudo> pour commencer.')
@@ -521,7 +529,7 @@ async def ranked(ctx, *, name: str):
         final_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(final_img)
 
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+        font = get_default_font()
 
         for idx, img in enumerate(champ_imgs):
             x = idx * size
