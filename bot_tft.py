@@ -480,6 +480,8 @@ async def ranked(ctx, *, name: str):
 
     # ---------- Construit une image ligne de compo ----------
     async def build_comp_image(units):
+        from PIL import Image, ImageDraw, ImageFont
+
         size = 80
         star_band_height = 30
 
@@ -512,7 +514,6 @@ async def ranked(ctx, *, name: str):
         if not champ_imgs:
             return None
 
-        # Emoji d'étoiles
         def tier_emoji(tier):
             return "⭐" * min(max(tier, 1), 3)
 
@@ -522,19 +523,25 @@ async def ranked(ctx, *, name: str):
         final_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(final_img)
 
+        # ✔ Police qui marche sur Railway
+        font = ImageFont.load_default()
+
         for idx, img in enumerate(champ_imgs):
             x = idx * size
             stars = tier_emoji(tiers[idx])
 
-            # centrer les étoiles
-            text_w, text_h = draw.textsize(stars)
+            # ✔ bbox compatible Pillow 10+
+            bbox = draw.textbbox((0, 0), stars, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+
             tx = x + (size - text_w) // 2
             ty = (star_band_height - text_h) // 2
 
-            # contour noir
-            draw.text((tx + 1, ty + 1), stars, fill=(0, 0, 0))
-            # étoile blanche
-            draw.text((tx, ty), stars, fill=(255, 255, 255))
+            # 🎨 contour noir
+            draw.text((tx + 1, ty + 1), stars, fill=(0, 0, 0), font=font)
+            # ⭐ étoiles blanches
+            draw.text((tx, ty), stars, fill=(255, 255, 255), font=font)
 
             final_img.paste(img, (x, star_band_height), img)
 
