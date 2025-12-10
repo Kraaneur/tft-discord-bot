@@ -5,13 +5,14 @@ import json
 import os
 import re
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 
 # CONFIG (change ici)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 RIOT_API_KEY = os.getenv("RIOT_API_KEY")
 REGION = 'euw1'
 DATA_FILE = '/data/players.json'
+CDRAGON_BASE = "https://raw.communitydragon.org/latest/game/assets/ux/tft/championsplashes/patching"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -74,6 +75,9 @@ def get_default_font():
         return ImageFont.truetype(font_path, 22)
     except Exception:
         return ImageFont.load_default()
+
+def get_icon_url(character_id: str) -> str:
+    return f"{CDRAGON_BASE}/{character_id.lower()}_square.tft_set16.png"
 
 @bot.event
 async def on_ready():
@@ -432,151 +436,141 @@ async def commande(ctx):
 @bot.command(aliases=["ranked_history"])
 async def ranked(ctx, *, name: str):
     name = name.strip()
-
     if not name:
-        return await ctx.send("❌ Tu dois préciser un pseudo. Exemple : `!ranked Pseudo`")
+        await ctx.send("❌ Tu dois préciser un pseudo.")
+        return
 
     players = load_players()
-    player = next((p for p in players if p["name"].lower() == name.lower()), None)
+    player = next((p for p in players if p['name'].lower() == name.lower()), None)
 
     if not player:
-        return await ctx.send(f"❌ **{name}** n'est pas dans la liste.")
+        await ctx.send(f"❌ **{name}** n'est pas dans la liste.")
+        return
 
+    # -------------------------------------
+    # 2) Récupérer les 20 dernières parties
+    # -------------------------------------
     async with aiohttp.ClientSession() as session:
-        # Récupère 20 games max
         match_ids = await get_match_ids(session, player["uuid"], 20)
 
         if not match_ids:
-            return await ctx.send("❌ Impossible de récupérer l'historique des parties.")
+            await ctx.send("❌ Impossible de récupérer l'historique.")
+            return
 
-        # Filtrage des 5 ranked les plus récentes
         ranked_matches = []
+
         for match_id in match_ids:
             data = await get_match_data(session, match_id)
             if not data:
                 continue
 
             info = data.get("info", {})
-            if info.get("queue_id") != 1100:  # Ranked TFT
+            if info.get("queue_id") != 1100:  # seulement ranked
                 continue
 
-            # Chercher le joueur
-            for pinfo in info.get("participants", []):
-                if pinfo["puuid"] == player["uuid"]:
-                    ranked_matches.append(pinfo)
+            for p in info.get("participants", []):
+                if p["puuid"] == player["uuid"]:
+                    ranked_matches.append(p)
                     break
 
-            if len(ranked_matches) >= 5:
+            if len(ranked_matches) == 5:
                 break
 
     if not ranked_matches:
-        return await ctx.send(f"⚪ **{name}** n’a fait aucune partie classée dans ses 20 dernières games.")
+        await ctx.send(f"⚪ **{name}** n'a pas joué de ranked dans ses 20 dernières parties.")
+        return
 
-    # ---------- Emoji placements ----------
-    PLACEMENT_EMOJIS = {
-        1: "🥇", 2: "🥈", 3: "🥉",
-        4: "🙂", 5: "🙃", 6: "😥", 7: "😢", 8: "😭"
-    }
+    # ---------------------------------
+    # 3) Fonctions utilitaires
+    # ---------------------------------
+    def placement_emoji(p):
+        return {
+            1: "🥇", 2: "🥈", 3: "🥉",
+            4: "🙂", 5: "🙃", 6: "😥",
+            7: "😢", 8: "😭",
+        }.get(p, "")
 
-    # ---------- URLs des icônes Community Dragon ----------
-    CDRAGON_BASE = (
-        "https://raw.communitydragon.org/latest/game/assets/ux/tft/championsplashes/patching"
-    )
+    def stars(tier):
+        return "⭐" * min(max(tier, 1), 3)
 
-    def get_icon_url(character_id: str) -> str:
-        return f"{CDRAGON_BASE}/{character_id.lower()}_square.tft_set16.png"
-
-    # ---------- Construit une image ligne de compo ----------
+    # ------------------------------
+    # 4) Génération images compo TFT
+    # ------------------------------
     async def build_comp_image(units):
         size = 80
-        star_band_height = 30
-
         champ_imgs = []
-        tiers = []
 
-        async with aiohttp.ClientSession() as sub_session:
+        async with aiohttp.ClientSession() as sess:
             for u in units:
-                char_id = u.get("character_id")
-                if not char_id:
+                cid = u.get("character_id")
+                if not cid:
                     continue
 
-                url = get_icon_url(char_id)
+                url = get_icon_url(cid)
+
                 try:
-                    async with sub_session.get(url) as resp:
+                    async with sess.get(url) as resp:
                         if resp.status != 200:
                             continue
-                        img_data = await resp.read()
+                        data = await resp.read()
                 except:
                     continue
 
                 try:
-                    img = Image.open(BytesIO(img_data)).convert("RGBA")
+                    img = Image.open(BytesIO(data)).convert("RGBA")
                     img = img.resize((size, size))
                     champ_imgs.append(img)
-                    tiers.append(u.get("tier", 1))
                 except:
                     continue
 
         if not champ_imgs:
             return None
 
-        def tier_emoji(tier):
-            return "⭐" * min(max(tier, 1), 3)
-
         width = size * len(champ_imgs)
-        height = star_band_height + size
+        final = Image.new("RGBA", (width, size), (0, 0, 0, 0))
 
-        final_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(final_img)
-
-        font = get_default_font()
-
-        for idx, img in enumerate(champ_imgs):
-            x = idx * size
-            stars = tier_emoji(tiers[idx])
-
-            bbox = draw.textbbox((0, 0), stars, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-
-            tx = x + (size - text_w) // 2
-            ty = (star_band_height - text_h) // 2
-
-            # contour
-            draw.text((tx + 1, ty + 1), stars, fill=(0, 0, 0), font=font)
-            # texte
-            draw.text((tx, ty), stars, fill=(255, 255, 255), font=font)
-
-            final_img.paste(img, (x, star_band_height), img)
+        for i, img in enumerate(champ_imgs):
+            final.paste(img, (i * size, 0), img)
 
         buf = BytesIO()
-        final_img.save(buf, format="PNG")
+        final.save(buf, format="PNG")
         buf.seek(0)
         return buf
 
-    # ---------- Envoi des embeds ----------
-    for i, m in enumerate(ranked_matches, 1):
-        placement = m["placement"]
-        emoji = PLACEMENT_EMOJIS.get(placement, "")
-        time_min = round(m["time_eliminated"] / 60)
-        units = m.get("units", [])
+    # ------------------------------
+    # 5) Construction de l'embed unique
+    # ------------------------------
+    embed = discord.Embed(
+        title=f"Historique Ranked — {name}",
+        color=0x9b59b6
+    )
+    embed.set_footer(text="Top 1 = insane 🥇 • Top 8 = ouch 😭")
 
-        embed = discord.Embed(
-            title=f"Partie classée #{i} — Top {placement} {emoji}",
-            color=0x9b59b6
-        )
+    files = []
+    description_lines = []
 
-        embed.add_field(name="Temps élimination", value=f"{time_min} min", inline=False)
-        embed.add_field(name="Composition", value="(voir ci-dessous 👇)", inline=False)
-        embed.set_footer(text="Top 1 = énorme 🥇 • Top 8 = oups 😭")
+    for idx, match in enumerate(ranked_matches, 1):
+        place = match["placement"]
+        emoji = placement_emoji(place)
+        minutes = round(match["time_eliminated"] / 60)
+        units = match.get("units", [])
 
-        comp_buf = await build_comp_image(units)
+        # ligne descriptive
+        desc = f"**#{idx} — TOP {place} {emoji} — {minutes} min**\n"
+        desc += " ".join(stars(u.get('tier', 1)) for u in units) + "\n"
+        desc += f"→ **Compo #{idx} ci-dessous**\n"
+        description_lines.append(desc)
 
-        if comp_buf:
-            file = discord.File(comp_buf, filename=f"comp_{i}.png")
-            embed.set_image(url=f"attachment://comp_{i}.png")
-            await ctx.send(embed=embed, file=file)
-        else:
-            await ctx.send(embed=embed)
+        # image compo
+        comp = await build_comp_image(units)
+        if comp:
+            fname = f"comp_{idx}.png"
+            files.append(discord.File(comp, filename=fname))
+            embed.add_field(name=f"Compo #{idx}", value=f"[image ci-dessous]", inline=False)
+            embed.set_image(url=f"attachment://{fname}")
+
+    embed.description = "\n".join(description_lines)
+
+    await ctx.send(embed=embed, files=files)
 
 bot.run(DISCORD_TOKEN)
