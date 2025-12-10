@@ -4,6 +4,8 @@ import aiohttp
 import json
 import os
 import re
+from io import BytesIO
+from PIL import Image, ImageDraw
 
 # CONFIG (change ici)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -406,11 +408,164 @@ async def commande(ctx):
     )
 
     embed.add_field(
+        name="📜 !ranked <pseudo>",
+        value="Affiche les 5 dernières games ranked (sur les 20 dernières games).\nExemple : !history Toto",
+        inline=False
+    )
+
+    embed.add_field(
         name="💀 !removeAll",
         value="Supprime totalement le classement. A ne pas utiliser n'importe comment.",
         inline=False
     )
 
     await ctx.send(embed=embed)
+
+@bot.command(aliases=["ranked_history"])
+async def ranked(ctx, *, name: str):
+    name = name.strip()
+
+    if not name:
+        return await ctx.send("❌ Tu dois préciser un pseudo. Exemple : `!ranked Pseudo`")
+
+    players = load_players()
+    player = next((p for p in players if p["name"].lower() == name.lower()), None)
+
+    if not player:
+        return await ctx.send(f"❌ **{name}** n'est pas dans la liste.")
+
+    async with aiohttp.ClientSession() as session:
+        # Récupère 20 games max
+        match_ids = await get_match_ids(session, player["uuid"], 20)
+
+        if not match_ids:
+            return await ctx.send("❌ Impossible de récupérer l'historique des parties.")
+
+        # Filtrage des 5 ranked les plus récentes
+        ranked_matches = []
+        for match_id in match_ids:
+            data = await get_match_data(session, match_id)
+            if not data:
+                continue
+
+            info = data.get("info", {})
+            if info.get("queue_id") != 1100:  # Ranked TFT
+                continue
+
+            # Chercher le joueur
+            for pinfo in info.get("participants", []):
+                if pinfo["puuid"] == player["uuid"]:
+                    ranked_matches.append(pinfo)
+                    break
+
+            if len(ranked_matches) >= 5:
+                break
+
+    if not ranked_matches:
+        return await ctx.send(f"⚪ **{name}** n’a fait aucune partie classée dans ses 20 dernières games.")
+
+    # ---------- Emoji placements ----------
+    PLACEMENT_EMOJIS = {
+        1: "🥇", 2: "🥈", 3: "🥉",
+        4: "🙂", 5: "🙃", 6: "😥", 7: "😢", 8: "😭"
+    }
+
+    # ---------- URLs des icônes Community Dragon ----------
+    CDRAGON_BASE = (
+        "https://raw.communitydragon.org/latest/game/assets/ux/tft/championsplashes/patching"
+    )
+
+    def get_icon_url(character_id: str) -> str:
+        return f"{CDRAGON_BASE}/{character_id.lower()}_square.tft_set16.png"
+
+    # ---------- Construit une image ligne de compo ----------
+    async def build_comp_image(units):
+        size = 80
+        star_band_height = 30
+
+        champ_imgs = []
+        tiers = []
+
+        async with aiohttp.ClientSession() as sub_session:
+            for u in units:
+                char_id = u.get("character_id")
+                if not char_id:
+                    continue
+
+                url = get_icon_url(char_id)
+                try:
+                    async with sub_session.get(url) as resp:
+                        if resp.status != 200:
+                            continue
+                        img_data = await resp.read()
+                except:
+                    continue
+
+                try:
+                    img = Image.open(BytesIO(img_data)).convert("RGBA")
+                    img = img.resize((size, size))
+                    champ_imgs.append(img)
+                    tiers.append(u.get("tier", 1))
+                except:
+                    continue
+
+        if not champ_imgs:
+            return None
+
+        # Emoji d'étoiles
+        def tier_emoji(tier):
+            return "⭐" * min(max(tier, 1), 3)
+
+        width = size * len(champ_imgs)
+        height = star_band_height + size
+
+        final_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(final_img)
+
+        for idx, img in enumerate(champ_imgs):
+            x = idx * size
+            stars = tier_emoji(tiers[idx])
+
+            # centrer les étoiles
+            text_w, text_h = draw.textsize(stars)
+            tx = x + (size - text_w) // 2
+            ty = (star_band_height - text_h) // 2
+
+            # contour noir
+            draw.text((tx + 1, ty + 1), stars, fill=(0, 0, 0))
+            # étoile blanche
+            draw.text((tx, ty), stars, fill=(255, 255, 255))
+
+            final_img.paste(img, (x, star_band_height), img)
+
+        buf = BytesIO()
+        final_img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+
+    # ---------- Envoi des embeds ----------
+    for i, m in enumerate(ranked_matches, 1):
+        placement = m["placement"]
+        emoji = PLACEMENT_EMOJIS.get(placement, "")
+        time_min = round(m["time_eliminated"] / 60)
+        units = m.get("units", [])
+
+        embed = discord.Embed(
+            title=f"Partie classée #{i} — Top {placement} {emoji}",
+            color=0x9b59b6
+        )
+
+        embed.add_field(name="Temps élimination", value=f"{time_min} min", inline=False)
+        embed.add_field(name="Composition", value="(voir ci-dessous 👇)", inline=False)
+        embed.set_footer(text="Top 1 = énorme 🥇 • Top 8 = oups 😭")
+
+        comp_buf = await build_comp_image(units)
+
+        if comp_buf:
+            file = discord.File(comp_buf, filename=f"comp_{i}.png")
+            embed.set_image(url=f"attachment://comp_{i}.png")
+            await ctx.send(embed=embed, file=file)
+        else:
+            await ctx.send(embed=embed)
 
 bot.run(DISCORD_TOKEN)
