@@ -3,6 +3,7 @@ from discord.ext import commands
 import aiohttp
 import json
 import os
+import re
 
 # CONFIG (change ici)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -230,8 +231,13 @@ async def stats(ctx, *, name: str):
     
 @bot.command()
 async def compare(ctx, *, args: str):
+    players = re.findall(r'"([^"]+)"', args)
+
+    if len(players) != 2:
+        return await ctx.send("❌ Utilisation incorrecte.\nFormat : `!compare \"pseudo1\" \"pseudo2\"`")
+
+    player1, player2 = players
     RANK_VALUES = {'IV': 0, 'III': 1, 'II': 2, 'I': 3}
-    player1, player2 = args.split(" vs ")
     players = load_players()
 
     # Récupérer les joueurs
@@ -388,8 +394,8 @@ async def commande(ctx):
     )
 
     embed.add_field(
-        name="⚔️ !compare <pseudo1> vs <pseudo2>",
-        value="Compare deux joueurs.\n**Exemple :** `!compare Jean Claude vs Claude Jean`",
+        name="⚔️ !compare \"pseudo1\" \"pseudo2\"",
+        value="Compare deux joueurs.\n**Exemple :** `!compare \"Jean Claude\" \"Claude Jean\"`",
         inline=False
     )
 
