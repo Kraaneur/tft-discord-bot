@@ -230,6 +230,7 @@ async def stats(ctx, *, name: str):
     
 @bot.command()
 async def compare(ctx, *, args: str):
+    RANK_VALUES = {'IV': 0, 'III': 1, 'II': 2, 'I': 3}
     player1, player2 = args.split(" vs ")
     players = load_players()
 
@@ -285,7 +286,13 @@ async def compare(ctx, *, args: str):
     )
 
     # Verdict
-    winner = player1 if lp1 > lp2 else player2
+    def score(tier, div, lp):
+        return TIER_VALUES.get(tier, 0) * 1000 + RANK_VALUES.get(div, 0) * 100 + lp
+
+    score_p1 = score(t1,d1,lp1)
+    score_p2 = score(t2,d2,lp2)
+
+    winner = player1 if score_p1 > score_p2 else player2
     embed.add_field(
         name="🏆 Avantage",
         value=f"Avantage actuel : **{winner}**",
