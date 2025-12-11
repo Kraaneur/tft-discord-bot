@@ -6,12 +6,14 @@ import os
 import re
 from io import BytesIO
 from PIL import Image, ImageFont, ImageDraw
+import asyncio
 
 # CONFIG (change ici)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 RIOT_API_KEY = os.getenv("RIOT_API_KEY")
 REGION = 'euw1'
 DATA_FILE = '/data/players.json'
+STATS_FILE = '/data/stats.json'
 CDRAGON_BASE = "https://raw.communitydragon.org/latest/game/assets/ux/tft/championsplashes/patching"
 
 intents = discord.Intents.default()
@@ -78,6 +80,111 @@ def get_default_font():
 
 def get_icon_url(character_id: str) -> str:
     return f"{CDRAGON_BASE}/{character_id.lower()}_square.tft_set16.png"
+
+def load_stats():
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_stats(stats):
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
+
+def _pretty_trait_name(trait_name: str) -> str:
+    # "TFT16_Demacia" -> "Demacia"
+    return trait_name.split("_")[-1].title()
+
+async def analyze_comps(session, puuid: str, count: int = 60):
+    """
+    Analyse les dernières parties du joueur (set 16 uniquement) et renvoie :
+    {
+      "Compo": {"games": x, "wins": y, "placements": [...]},
+      ...
+    }
+    On parallélise les appels à get_match_data pour accélérer.
+    """
+    comp_stats = {}
+
+    match_ids = await get_match_ids(session, puuid, count)
+    if not match_ids:
+        return comp_stats
+
+    # Limite de concurrence pour respecter le rate-limit Riot
+    semaphore = asyncio.Semaphore(5)
+
+    async def fetch_match(mid):
+        async with semaphore:
+            try:
+                return await get_match_data(session, mid)
+            except Exception:
+                return None
+
+    # On récupère les infos de match en parallèle
+    results = await asyncio.gather(
+        *(fetch_match(mid) for mid in match_ids),
+        return_exceptions=False
+    )
+
+    for data in results:
+        if not data:
+            continue
+
+        info = data.get("info", {})
+
+        if info.get("queue_id") != 1100:
+            continue
+
+        # On récupère le participant correspondant
+        participant = None
+        for p in info.get("participants", []):
+            if p.get("puuid") == puuid:
+                participant = p
+                break
+
+        if not participant:
+            continue
+
+        placement = participant.get("placement")
+        traits = participant.get("traits", [])
+        if placement is None or not traits:
+            continue
+
+        # --------- FILTRE SET 16 UNIQUEMENT ----------
+        if not any(t.get("name", "").startswith("TFT16_") for t in traits):
+            continue
+
+        # Trait "principal" : plus haut tier_current puis num_units
+        main_trait = max(
+            traits,
+            key=lambda t: (t.get("tier_current", 0), t.get("num_units", 0))
+        )
+        comp_name = _pretty_trait_name(main_trait.get("name", "Unknown"))
+
+        stats = comp_stats.setdefault(
+            comp_name,
+            {"games": 0, "wins": 0, "placements": []}
+        )
+        stats["games"] += 1
+        stats["placements"].append(placement)
+
+        if 1 <= placement <= 4:  # Top 1–4 = win
+            stats["wins"] += 1
+
+    return comp_stats
+
+def _winrate(stats_dict) -> float:
+    g = stats_dict["games"]
+    if g == 0:
+        return 0.0
+    return round(stats_dict["wins"] * 100 / g, 1)
+
+
+def _avg_placement(stats_dict) -> float:
+    pl = stats_dict["placements"]
+    if not pl:
+        return 0.0
+    return round(sum(pl) / len(pl), 2)
 
 @bot.event
 async def on_ready():
@@ -189,8 +296,25 @@ async def stats(ctx, *, name: str):
         await ctx.send(f"❌ **{name}** n'est pas dans la liste. Ajoute-le avec `!add {name}#TAG`.")
         return
 
+    # On charge le cache
+    all_stats = load_stats()
+    cached = all_stats.get(player["uuid"])
+
     async with aiohttp.ClientSession() as session:
+        # Classement actuel
         league = await get_league(session, player['uuid'])
+        
+        # Compos : soit depuis le cache, soit on recalcule
+        if cached and "comps" in cached:
+            comp_stats = cached["comps"]
+        else:
+            comp_stats = await analyze_comps(session, player['uuid'], count=60)
+            all_stats[player["uuid"]] = {
+                "name": player["name"],
+                "region": REGION,
+                "comps": comp_stats,
+            }
+            save_stats(all_stats)
 
     if not league:
         await ctx.send(f"⚪ **{name}** n'a **pas de classement TFT**.")
@@ -236,8 +360,57 @@ async def stats(ctx, *, name: str):
         inline=True
     )
 
-    # Image d'icône de tier (optionnel si tu veux)
-    embed.set_thumbnail(url=f"https://static.bigbrain.gg/assets/tft/tiers/{tier.lower()}.png")
+    # ---------- Bloc "compos" ----------
+    if comp_stats:
+        # compo la plus jouée
+        most_played_name, most_played = max(
+            comp_stats.items(),
+            key=lambda item: item[1]["games"]
+        )
+
+        MIN_GAMES_FOR_WR = 3
+        eligible = {
+            n: s for n, s in comp_stats.items()
+            if s["games"] >= MIN_GAMES_FOR_WR
+        } or comp_stats
+
+        best_name, best_stats = max(
+            eligible.items(),
+            key=lambda item: _winrate(item[1])
+        )
+        worst_name, worst_stats = min(
+            eligible.items(),
+            key=lambda item: _winrate(item[1])
+        )
+
+        most_avg = _avg_placement(most_played)
+        best_avg = _avg_placement(best_stats)
+        worst_avg = _avg_placement(worst_stats)
+
+        most_wr = _winrate(most_played)
+        best_wr = _winrate(best_stats)
+        worst_wr = _winrate(worst_stats)
+
+        line = (
+            f"**Compo la plus jouée :** {most_played_name} "
+            f"({most_played['games']} games) : AVG --> {most_avg} ({most_wr}% WR)\n"
+            f"**Meilleure compo :** {best_name} "
+            f"({best_stats['games']} games) : AVG --> {best_avg} ({best_wr}% WR)\n"
+            f"**Pire compo :** {worst_name} "
+            f"({worst_stats['games']} games) : AVG --> {worst_avg} ({worst_wr}% WR)"
+        )
+
+        embed.add_field(
+            name="🍀 Data compos",
+            value=line,
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="🍀 Data compos",
+            value="Pas assez de données récentes (set 16) pour analyser les compositions.",
+            inline=False
+        )
 
     embed.set_footer(text="Données issues de l'API Riot Games")
 
