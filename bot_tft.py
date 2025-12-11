@@ -28,6 +28,8 @@ TIER_VALUES = {
     'GRANDMASTER': 900, 'CHALLENGER': 1000
 }
 
+RANK_VALUES = {'IV': 0, 'III': 1, 'II': 2, 'I': 3}
+
 def load_players():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
@@ -250,7 +252,8 @@ async def classement(ctx):
     def get_score(league):
         tier = league['tier']
         lp = league['leaguePoints']
-        return TIER_VALUES.get(tier, 0) * 100 + lp
+        div = league['rank']
+        return TIER_VALUES.get(tier, 0) * 1000 + RANK_VALUES.get(div, 0) * 100 + lp
 
     valid_stats.sort(key=lambda x: get_score(x[1]), reverse=True)
 
@@ -424,7 +427,6 @@ async def compare(ctx, *, args: str):
         return await ctx.send("❌ Utilisation incorrecte.\nFormat : `!compare \"pseudo1\" \"pseudo2\"`")
 
     player1, player2 = players
-    RANK_VALUES = {'IV': 0, 'III': 1, 'II': 2, 'I': 3}
     players = load_players()
 
     # Récupérer les joueurs
